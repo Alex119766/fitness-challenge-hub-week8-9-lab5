@@ -163,4 +163,31 @@ class WorkoutChallengeControllerTest {
         assertEquals("redirect:/workout-logs", viewName);
         assertEquals(initialCount + 1, workoutLogService.getAllLogs().size());
     }
+
+    @Test
+    void showWorkoutLogs_andCustomWorkoutLogQueries_shouldFilterSortAndPaginate() {
+        Model model = new ExtendedModelMap();
+        String viewName = workoutLogController.showWorkoutLogs(0, 5, "id", "DESC", null, "all", model);
+
+        assertEquals("workout-logs", viewName);
+        assertEquals(2, model.getAttribute("totalPages"));
+        assertEquals(8L, model.getAttribute("totalElements"));
+
+        // Derived query: findByAthleteNameContainingIgnoreCase
+        Page<WorkoutLog> alexLogs = workoutLogService.searchByAthleteNameIgnoreCase("Alex", PageRequest.of(0, 5));
+        assertEquals(2L, alexLogs.getTotalElements());
+
+        // Derived query: findByCaloriesBurnedGreaterThanEqual
+        Page<WorkoutLog> highCalorieLogs = workoutLogService.searchByMinCalories(450, PageRequest.of(0, 5));
+        assertTrue(highCalorieLogs.getTotalElements() >= 3);
+
+        // Custom JPQL @Query: findHighestCalorieLogs
+        Page<WorkoutLog> highestCal = workoutLogService.searchHighestCalorieLogs(PageRequest.of(0, 5));
+        assertFalse(highestCal.isEmpty());
+        assertEquals(580, highestCal.getContent().get(0).getCaloriesBurned());
+
+        // Custom JPQL @Query: findLogsByIntensityAndMinDuration
+        Page<WorkoutLog> highIntensity = workoutLogService.searchLogsByIntensityAndMinDuration("High", 25, PageRequest.of(0, 5));
+        assertTrue(highIntensity.getTotalElements() >= 3);
+    }
 }

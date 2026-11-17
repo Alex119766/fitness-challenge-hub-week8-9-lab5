@@ -49,7 +49,9 @@ public class WorkoutChallengeController {
         Page<Challenge> challengePage;
 
         if ("title".equalsIgnoreCase(filterType) && search != null && !search.trim().isEmpty()) {
+
             challengePage = challengeService.searchByTitleIgnoreCase(search.trim(), pageable);
+
         } else if ("reward".equalsIgnoreCase(filterType) && search != null && !search.trim().isEmpty()) {
             int minReward = 300;
             try {

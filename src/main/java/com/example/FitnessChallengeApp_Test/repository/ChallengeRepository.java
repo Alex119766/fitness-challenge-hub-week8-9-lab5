@@ -21,6 +21,8 @@ import java.util.List;
 @Repository
 public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
 
+        //0. We have at least 12 pre built methods just by extending JpaRepository
+
         // =========================================================================
         // 1. Derived Query Methods (Method Name Keywords)
         // =========================================================================

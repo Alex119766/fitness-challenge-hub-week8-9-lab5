@@ -5,18 +5,22 @@ import com.example.FitnessChallengeApp_Test.model.WorkoutLog;
 import com.example.FitnessChallengeApp_Test.service.ChallengeService;
 import com.example.FitnessChallengeApp_Test.service.WorkoutLogService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 /**
  * Controller for Athlete Workout Logging.
  * Handles workout form rendering, @ManyToOne Challenge binding, Bean Validation,
- * and listing logged workouts. Students will refactor displayWorkoutLogs() in the Lab
- * to support pagination, sorting, and custom repository queries.
+ * and paginated/sorted workout log browsing with custom JPA queries.
  */
 @Controller
 public class WorkoutLogController {
@@ -68,10 +72,55 @@ public class WorkoutLogController {
     }
 
     @GetMapping("/workout-logs")
-    public String showWorkoutLogs(Model model) {
-        model.addAttribute("workoutLogs", workoutLogService.getAllLogs());
+    public String showWorkoutLogs(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "5") int size,
+            @RequestParam(defaultValue = "id") String sort,
+            @RequestParam(defaultValue = "DESC") String direction,
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "all") String filterType,
+            Model model
+    ) {
+        Sort.Direction sortDir = Sort.Direction.fromString(direction);
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortDir, sort));
+
+        Page<WorkoutLog> logPage;
+
+        if ("athlete".equalsIgnoreCase(filterType) && search != null && !search.trim().isEmpty()) {
+            logPage = workoutLogService.searchByAthleteNameIgnoreCase(search.trim(), pageable);
+        } else if ("calories".equalsIgnoreCase(filterType) && search != null && !search.trim().isEmpty()) {
+            int minCalories = 200;
+            try {
+                minCalories = Integer.parseInt(search.trim());
+            } catch (NumberFormatException e) {
+                // Default to 200 kcal if input is not a valid integer
+            }
+            logPage = workoutLogService.searchByMinCalories(minCalories, pageable);
+        } else if ("highestCalories".equalsIgnoreCase(filterType)) {
+            logPage = workoutLogService.searchHighestCalorieLogs(pageable);
+        } else if ("intensityDuration".equalsIgnoreCase(filterType) && search != null && !search.trim().isEmpty()) {
+            logPage = workoutLogService.searchLogsByIntensityAndMinDuration(search.trim(), 25, pageable);
+        } else {
+            logPage = workoutLogService.getLogs(pageable);
+        }
+
         model.addAttribute("pageTitle", "FitSquad Hub - Community Workout Logs");
+
+        // Pagination & content attributes
+        model.addAttribute("workoutLogs", logPage.getContent());
+        model.addAttribute("totalPages", logPage.getTotalPages());
+        model.addAttribute("totalElements", logPage.getTotalElements());
+        model.addAttribute("currentPage", page);
+        model.addAttribute("pageSize", size);
+        model.addAttribute("hasPrevious", logPage.hasPrevious());
+        model.addAttribute("hasNext", logPage.hasNext());
+
+        // Preserve filter & sort state across page clicks
+        model.addAttribute("search", search);
+        model.addAttribute("sort", sort);
+        model.addAttribute("direction", direction);
+        model.addAttribute("filterType", filterType);
+
         return "workout-logs";
     }
 }
-
