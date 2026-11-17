@@ -2,7 +2,7 @@
 
 ## Course Information
 - **Course:** CPAN-228 Web Application Development
-- **Topic:** Spring Security — Authentication, Role-Based Authorization (`USER` vs. `ADMIN`), `SecurityFilterChain`, `UserDetailsService`, BCrypt Password Hashing & Thymeleaf Security Tags
+- **Topic:** Spring Security — Authentication, Role-Based Authorization (`USER`, `COACH`, and `ADMIN`), `SecurityFilterChain`, `UserDetailsService`, BCrypt Password Hashing & Thymeleaf Security Tags
 - **Application Theme:** FitSquad Hub (Fitness Challenge & Athlete Workout Platform)
 
 ---
@@ -18,23 +18,25 @@ Your job is to wire up the **Spring Security** layer end-to-end:
 2. Create the `User` entity and `UserRepository`.
 3. Implement `UserDetailsService` to load users from the H2 database.
 4. Configure the `SecurityFilterChain` and `BCryptPasswordEncoder` in `SecurityConfig`.
-5. Build a custom Login page (`/login`) and Athlete Registration flow (`/register`).
+5. Build a custom Login page (`/login`) and a Registration flow (`/register`) with a **"Register as a Coach"** checkbox.
 6. Seed a default `ADMIN` account on startup using an `ApplicationRunner` (`DataLoader`).
-7. Protect administrative routes and hide admin-only navigation links in Thymeleaf using `sec:authorize`.
+7. Protect administrative and coach routes and conditionally render navigation links in Thymeleaf using `sec:authorize`.
 
 By the end of this lab:
 - **Unauthenticated visitors** will be redirected to `/login` (with access only to `/login`, `/register`, and static assets).
-- **Regular Athletes (`USER`)** will be able to browse challenges (`/`, `/challenges`), view and log workouts (`/workout-logs`, `/log-workout`), and view coaches (`/coaches`), but **cannot** access admin creation pages or the H2 console.
-- **Administrators (`ADMIN`)** will have full access to **Challenge & Coach management** (`/create-challenge`, `/create-coach`) as well as the **H2 Database Console** (`/h2-console/**`).
+- **Regular Athletes (`USER`)** (registered with the Coach checkbox unchecked) can browse challenges (`/`, `/challenges`), view and log workouts (`/workout-logs`, `/log-workout`), and view coaches (`/coaches`), but **cannot** create challenges, register coaches, or access the H2 console.
+- **Coaches (`COACH`)** (registered by checking the **"Register as a Coach"** checkbox on `/register`) have access to all Athlete pages **plus** the ability to create new challenges (`/create-challenge`), but **cannot** access Admin-only pages (`/create-coach` or `/h2-console/**`).
+- **Administrators (`ADMIN`)** (seeded on startup via `DataLoader`) have full access to **everything** — including `/create-challenge`, `/create-coach`, and the **H2 Database Console** (`/h2-console/**`).
 
 ---
 
 ## Role-Based Access Control (RBAC) Matrix
 
-| Role | Who They Are | What They Can Access |
+| Role | Who They Are / How Created | What They Can Access |
 | :--- | :--- | :--- |
-| **`USER`** | Self-registered Athletes (via `/register`) | Catalogs & Athlete Workout Logging (`/`, `/challenges`, `/workout-logs`, `/log-workout`, `/coaches`) |
-| **`ADMIN`** | Seeded on startup (via `DataLoader`) | **Everything** — including `/create-challenge`, `/create-coach`, and `/h2-console/**` |
+| **`USER`** | Self-registered Athletes on `/register` *(Coach checkbox unchecked)* | Catalogs & Athlete Workout Logging (`/`, `/challenges`, `/workout-logs`, `/log-workout`, `/coaches`) |
+| **`COACH`** | Self-registered Coaches on `/register` *(Coach checkbox checked)* | All `USER` pages **+** Create Challenge (`/create-challenge`) *(No access to `/create-coach` or `/h2-console/**`)* |
+| **`ADMIN`** | Seeded on startup via `DataLoader` (`admin` / `admin123`) | **Everything** — `/create-challenge`, `/create-coach`, and `/h2-console/**` |
 
 ---
 
@@ -86,7 +88,7 @@ src/main/resources/templates/
 ├── fragments/
 │   └── navbar.html                       <-- Part 8: Role-gated links (sec:authorize) & Logout button
 ├── login.html                            <-- Part 5: Custom FitSquad Hub login form
-└── register.html                         <-- Part 6: Athlete self-registration form
+└── register.html                         <-- Part 6: Self-registration form with Coach checkbox
 ```
 
 ---
@@ -123,11 +125,11 @@ Open [`pom.xml`](file:///pom.xml) and add the following two dependencies inside 
      - `id` (`Long`) — annotated with `@Id` and `@GeneratedValue(strategy = GenerationType.IDENTITY)`
      - `username` (`String`) — annotated with `@NotBlank` and `@Column(nullable = false, unique = true)`
      - `password` (`String`) — stores the BCrypt-encoded password hash (`@NotBlank`, `@Column(nullable = false)`)
-     - `role` (`String`) — stores the user's role, e.g., `"USER"` or `"ADMIN"` (`@Column(nullable = false)`)
+     - `role` (`String`) — stores the user's role: `"USER"`, `"COACH"`, or `"ADMIN"` (`@Column(nullable = false)`)
 
 2. **Create `UserRepository.java`** inside `src/main/java/com/example/FitnessChallengeApp_Test/repository/`:
    - Extend `JpaRepository<User, Long>`.
-   - Add a derived query method to look up a user by username:
+   - Add derived query methods to look up a user by username:
      ```java
      Optional<User> findByUsername(String username);
      boolean existsByUsername(String username);
@@ -150,7 +152,7 @@ Create a new service class (e.g., `CustomUserDetailsService.java`) inside `src/m
      return org.springframework.security.core.userdetails.User
              .withUsername(user.getUsername())
              .password(user.getPassword())
-             .roles(user.getRole()) // Automatically prefixes with "ROLE_" (e.g., "ROLE_ADMIN")
+             .roles(user.getRole()) // Automatically prefixes with "ROLE_" (e.g., "ROLE_COACH", "ROLE_ADMIN")
              .build();
      ```
 
@@ -169,9 +171,9 @@ Create a new package `com.example.FitnessChallengeApp_Test.config` and add `Secu
    }
    ```
 3. Define a `SecurityFilterChain` bean that configures the following authorization rules **in order**:
-   - `/login`, `/register`, `/css/**`, `/js/**` $\rightarrow$ **Everyone** (`permitAll()`, no login required)
-   - `/create-challenge`, `/create-coach` $\rightarrow$ **`ADMIN` only** (`.hasRole("ADMIN")`)
-   - `/h2-console/**` $\rightarrow$ **`ADMIN` only** (`.hasRole("ADMIN")`)
+   - `/login`, `/register`, `/css/**`, `/js/**` $\rightarrow$ **Everyone** (`.permitAll()`, no login required)
+   - `/create-challenge` $\rightarrow$ **`COACH` or `ADMIN`** (`.hasAnyRole("COACH", "ADMIN")`)
+   - `/create-coach`, `/h2-console/**` $\rightarrow$ **`ADMIN` only** (`.hasRole("ADMIN")`)
    - **Everything else** (`/`, `/challenges`, `/workout-logs`, `/log-workout`, `/coaches`, etc.) $\rightarrow$ **Any authenticated user** (`.authenticated()`)
 4. Configure **Form Login**:
    - Use `/login` as the custom login page (`.loginPage("/login")`).
@@ -190,21 +192,35 @@ Create a new package `com.example.FitnessChallengeApp_Test.config` and add `Secu
 1. Create `src/main/resources/templates/login.html` styled to match FitSquad Hub:
    - Build an HTML `<form th:action="@{/login}" method="post">` with `name="username"` and `name="password"` inputs.
    - Display a friendly alert banner when `${param.error}` is present (*"Invalid username or password."*) and when `${param.logout}` is present (*"You have been signed out safely."*).
-   - Include a link to `th:href="@{/register}"` for new athletes to create an account.
+   - Include a link to `th:href="@{/register}"` for new athletes and coaches to create an account.
 2. Add a controller method (`GET /login`) in `AuthController` (or `UserController`) that returns the `"login"` view name.
 
 ---
 
-### Part 6 — Create the Registration Flow (`/register`)
+### Part 6 — Create the Registration Flow with Coach Checkbox (`/register`)
 
-1. In `AuthController` (or `UserController` / `RegistrationController`), implement:
+1. Create `src/main/resources/templates/register.html` with a form posting to `th:action="@{/register}"`:
+   - Include inputs for `username` and `password`.
+   - Include a **"Register as a Coach"** checkbox so users can choose whether to sign up as a standard Athlete (`USER`) or a Coach (`COACH`):
+     ```html
+     <div class="form-check form-switch mb-4">
+         <input class="form-check-input" type="checkbox" id="registerAsCoach" name="registerAsCoach" value="true">
+         <label class="form-check-label text-light" for="registerAsCoach">
+             Register as a Certified <strong>Coach</strong> (allows creating fitness challenges)
+         </label>
+     </div>
+     ```
+2. In `AuthController` (or `UserController` / `RegistrationController`), implement:
    - **`GET /register`**: Adds an empty `User` object to the model and returns `"register"`.
    - **`POST /register`**:
-     - Validates the submitted `User` (and checks if `userRepository.existsByUsername(user.getUsername())` is already true).
+     - Accepts the `User` model attribute and `@RequestParam(defaultValue = "false") boolean registerAsCoach`.
      - Encodes the raw password using `passwordEncoder.encode(user.getPassword())` before saving.
-     - Assigns the default role `"USER"` to all self-registered athletes (`user.setRole("USER")`).
+     - Assigns the role based on the checkbox:
+       ```java
+       user.setRole(registerAsCoach ? "COACH" : "USER");
+       ```
+       *(Note: `"ADMIN"` can never be assigned through the public registration form!)*
      - Saves the user to `userRepository` and redirects to `"redirect:/login?registered"`.
-2. Create `src/main/resources/templates/register.html` with a form posting to `th:action="@{/register}"`.
 
 ---
 
@@ -219,7 +235,6 @@ Create `DataLoader.java` inside `src/main/java/com/example/FitnessChallengeApp_T
      - **Username:** `"admin"`
      - **Password:** `passwordEncoder.encode("admin123")`
      - **Role:** `"ADMIN"`
-   - *(Optional)* You may also seed a default athlete account (`username = "athlete"`, `password = "athlete123"`, `role = "USER"`) for quick testing.
 
 ---
 
@@ -231,11 +246,18 @@ Create `DataLoader.java` inside `src/main/java/com/example/FitnessChallengeApp_T
          xmlns:th="http://www.thymeleaf.org"
          xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
    ```
-2. Use `sec:authorize="hasRole('ADMIN')"` to wrap administrative links so regular `USER` accounts do not see them:
-   - **Create Challenge** link (`/create-challenge`)
-   - **Register Coach** link (`/create-coach`)
+2. Use `sec:authorize="hasAnyRole('COACH', 'ADMIN')"` to wrap the **Create Challenge** link (`/create-challenge`) so both Coaches and Admins can see it, while regular Athletes (`USER`) cannot:
+   ```html
+   <li class="nav-item" sec:authorize="hasAnyRole('COACH', 'ADMIN')">
+       <a class="nav-link text-light px-3 rounded-pill" th:href="@{/create-challenge}">
+           <i class="bi bi-plus-circle-fill me-1 text-info"></i> Create Challenge
+       </a>
+   </li>
+   ```
+3. Use `sec:authorize="hasRole('ADMIN')"` to wrap Admin-only links so neither `USER` nor `COACH` accounts can see them:
+   - **Register Coach** button/link (`/create-coach`)
    - **H2 Console** link (`/h2-console`)
-3. Display the authenticated user's username (`<span sec:authentication="name"></span>`) and add a **Logout** `<form th:action="@{/logout}" method="post">` button visible to all authenticated users using `sec:authorize="isAuthenticated()"`.
+4. Display the authenticated user's username (`<span sec:authentication="name"></span>`) and add a **Logout** `<form th:action="@{/logout}" method="post">` button visible to all authenticated users using `sec:authorize="isAuthenticated()"`.
 
 ---
 
@@ -245,15 +267,17 @@ Verify each of the following scenarios manually in your browser:
 
 1. **Unauthenticated Redirect:**
    - Visit `http://localhost:8080/challenges` or `http://localhost:8080/workout-logs` in an incognito window $\rightarrow$ Confirm you are redirected to `http://localhost:8080/login`.
-2. **Self-Registration (`USER` Role):**
-   - Navigate to `http://localhost:8080/register`, register a new athlete account (e.g., `alex` / `pass123`), and log in at `/login`.
-3. **Athlete (`USER`) Permissions:**
-   - Confirm that logged in as `alex` (`USER`), you can view `/challenges`, `/workout-logs`, and `/coaches`, and submit a new workout at `/log-workout`.
-   - Confirm that the **Create Challenge**, **Register Coach**, and **H2 Console** links are hidden in the navbar.
-   - Manually type `http://localhost:8080/create-challenge`, `http://localhost:8080/create-coach`, or `http://localhost:8080/h2-console` in the address bar $\rightarrow$ Confirm Spring Security blocks access with **HTTP 403 Forbidden**.
-4. **Admin (`ADMIN`) Permissions:**
-   - Click **Logout** (confirm redirect to `/login?logout`), then sign in with the seeded admin credentials (`admin` / `admin123`).
-   - Confirm that **Create Challenge**, **Register Coach**, and **H2 Console** links appear in the navbar and that `/create-challenge`, `/create-coach`, and `/h2-console` all load normally.
+2. **Athlete Self-Registration (`USER` Role — Checkbox Unchecked):**
+   - Navigate to `http://localhost:8080/register`, register an athlete account (e.g., `alex` / `pass123`) **without** checking the Coach box, and log in at `/login`.
+   - Confirm you can view `/challenges`, `/workout-logs`, `/coaches`, and submit a workout at `/log-workout`.
+   - Confirm **Create Challenge**, **Register Coach**, and **H2 Console** are hidden, and visiting `/create-challenge` or `/create-coach` directly returns **HTTP 403 Forbidden**.
+3. **Coach Self-Registration (`COACH` Role — Checkbox Checked):**
+   - Log out, navigate to `http://localhost:8080/register`, register a coach account (e.g., `coach_maya` / `pass123`) **with the "Register as a Coach" checkbox checked**, and log in.
+   - Confirm that **Create Challenge** (`/create-challenge`) is visible and accessible, allowing you to launch a new challenge!
+   - Confirm that `/create-coach` and `/h2-console` remain hidden and blocked with **HTTP 403 Forbidden**.
+4. **Admin (`ADMIN` Role — Seeded Account):**
+   - Log out and sign in with the seeded admin credentials (`admin` / `admin123`).
+   - Confirm that **Create Challenge** (`/create-challenge`), **Register Coach** (`/create-coach`), and **H2 Console** (`/h2-console`) are all visible and accessible.
 
 ---
 
@@ -265,7 +289,7 @@ git status
 git add .
 
 # Commit your work
-git commit -m "Lab 5 & 6: Implement Spring Security authentication, RBAC, and Thymeleaf security tags"
+git commit -m "Lab 5 & 6: Implement Spring Security authentication, USER/COACH/ADMIN RBAC, and Thymeleaf security tags"
 
 # Push to your fork
 git push origin feature/lab5-yourname
